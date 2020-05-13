@@ -24,6 +24,25 @@ const net = require('net');
 
 /* create the server to serve the proxy port */
 let server = net.createServer(function (socket) {
+    /* just log any tcp errors to the syslog */
+    socket.on('error', function(e){
+        /**
+         * There is a known Node.js but what might
+         * cause TCP errors to be thrown by the
+         * underlying implementation:
+         * https://github.com/nodejs/node/issues/23169 
+         * 
+         */
+        if(e.code == "ECONNRESET"){
+            /* notify the user of the potential node bug */
+            syslog("TCP_ERROR: (Might be only a Node.js bug) " + e);
+        }else{
+            /* notify about any tcp errors that might arise */
+            syslog("TCP_ERROR: " + e);
+        }
+    });
+
+    /* handle any incoming data */
     socket.on('data', function(chunk) {
         /* get and parse the request from the client */
         let clientRequest = chunk.toString().split('\r\n');
