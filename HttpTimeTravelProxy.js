@@ -92,8 +92,13 @@ async function returnProxyResponse(socket,url){
             });
         }
     }catch(ex){
-        /* something crashed, return a bad gateway */
-        returnHttpBadGateway(socket,ex);
+        if(ex.statusCode == 404){
+            /* return an http not found */
+            returnHttpNotFound(socket,url);
+        }else{
+            /* something crashed, return a bad gateway */
+            returnHttpBadGateway(socket, "The remote server returned HTTP " + ex.statusCode);
+        }
     }
 }
 
@@ -143,6 +148,37 @@ function returnHttpResponse(socket,response){
         /* output the error to the logging */
         syslog('Failed to write output buffer to socket: ' + ex);
     }
+}
+
+/**
+ * Returns an HTTP 404 to the client
+ * 
+ * @param {object} socket 
+ * @param {string} url
+ * The originally requested url 
+ */
+function returnHttpNotFound(socket,url){
+    /* create the html content */
+    let html = '<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">\r\n'
+             + '<html><head>\r\n'
+             + '<title>404 Not Found</title>\r\n'
+             + '</head><body>\r\n'
+             + '<h1>Not Found</h1>\r\n'
+             + 'The remote server could not find the content:<br>\r\n'
+             + '<b>' + url + '<b>\r\n'
+             + '</body></html>\r\n';
+
+    /* return the response */
+    returnHttpResponse(socket,{
+        status: {
+            code: 404,
+            text: 'Not Found'
+        },
+        content: {
+            type: 'text/html',
+            body: Buffer.from(html)
+        }
+    });    
 }
 
 /**
@@ -267,7 +303,8 @@ function httpRequest(url) {
             if(proceed == true){
                 if ((response.statusCode < 200 || response.statusCode > 299)
                     && (response.statusCode !== 302 && response.statusCode !== 301)) {
-                    reject(new Error('Proxy request failed with status code ' + response.statusCode));
+                    /* attach the response to the rejection */
+                    reject(response);
                 }
     
                 const body = [];
