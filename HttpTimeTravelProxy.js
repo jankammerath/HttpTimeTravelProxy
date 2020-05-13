@@ -143,6 +143,7 @@ function returnHttpResponse(socket,response){
 
     try{
         /* write the response to the supplied socket */
+        if(socket.)
         socket.write(Buffer.concat(httpOutput));
     }catch(ex){
         /* output the error to the logging */
