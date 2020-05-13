@@ -17,6 +17,7 @@ const TIME_TRAVEL_DATETIME = "19990412";
 const PROXY_SERVER_PORT = 8099;
 const PROXY_SERVER_NAME = "HttpTimeTravelProxy/0.1";
 const WAYBACK_URL = "https://web.archive.org/web/";
+const WAYBACK_URL_FORMAT = "https:\/\/web\.archive\.org\/web\/([0-9a-z_]*)\/(.*)";
 
 /* import the networking libs */
 const net = require('net');
@@ -63,7 +64,7 @@ server.listen({port: PROXY_SERVER_PORT});
 async function returnProxyResponse(socket,url){
     try{
         /* log the request to the console */
-        console.log((new Date()).toISOString() + " - " + url);
+        syslog(url);
 
         /* rewrite the target url. the 'id_' attachment to
             the destination date ensures that the original
@@ -74,18 +75,45 @@ async function returnProxyResponse(socket,url){
         /* request the url from the wayback machine */
         let response = await httpRequest(targetUrl);
 
-        /* flush the result to the socket */
-        returnHttpResponse(socket,{
-            status: { code: 200, text: 'OK' },
-            content: {
-                type: response.headers['content-type'],
-                body: response.body
-            }
-        });
+        /* send redirect or final result */
+        if(response.statusCode == 301 || response.statusCode == 302){
+            /* pass on the 301 redirect */
+            returnHttpRedirect(socket,response.statusCode,
+                /* revert the wayback url to the original one */
+                getOriginalUrl(response.headers.location));
+        }else{
+            /* flush the result to the socket */
+            returnHttpResponse(socket,{
+                status: { code: 200, text: 'OK' },
+                content: {
+                    type: response.headers['content-type'],
+                    body: response.body
+                }
+            });
+        }
     }catch(ex){
         /* something crashed, return a bad gateway */
         returnHttpBadGateway(socket,ex);
     }
+}
+
+/**
+ * Performs an http redirect (either 302 or 301)
+ * 
+ * @param {object} socket 
+ * @param {int} statusCode 
+ * @param {string} locationUrl 
+ */
+function returnHttpRedirect(socket,statusCode,locationUrl){
+    let statusText = {
+        301: "Moved Permanently", 302: "Found"
+    }
+
+    socket.write(
+        "HTTP/1.1 " + statusCode + " " + statusText[statusCode] + "\r\n"
+        + "Location: " + locationUrl + "\r\n"
+        + "\r\n"
+    );
 }
 
 /**
@@ -108,8 +136,13 @@ function returnHttpResponse(socket,response){
         response.content.body
     ]
 
-    /* write the response to the supplied socket */
-    socket.write(Buffer.concat(httpOutput));
+    try{
+        /* write the response to the supplied socket */
+        socket.write(Buffer.concat(httpOutput));
+    }catch(ex){
+        /* output the error to the logging */
+        syslog('Failed to write output buffer to socket: ' + ex);
+    }
 }
 
 /**
@@ -172,6 +205,25 @@ function returnHttpBadRequest(socket){
 }
 
 /**
+ * Extracts the original url from the full wayback machine url
+ * 
+ * @param {string} translatedUrl 
+ * the url from the wayback machine
+ */
+function getOriginalUrl(translatedUrl){
+    let result = translatedUrl;
+
+    let part = (new RegExp(WAYBACK_URL_FORMAT)).exec(translatedUrl);
+    if(part !== null){
+        if(part.length == 3){ 
+            result = part[2].trim();
+        }
+    }
+
+    return result;
+}
+
+/**
  * Performs an http request
  * 
  * @param {string} url
@@ -181,18 +233,47 @@ function httpRequest(url) {
     return new Promise((resolve, reject) => {
         const lib = url.startsWith('https') ? require('https') : require('http');
         const request = lib.get(url, (response) => {
+            /* indicates whether to proceed response handling or not */
+            let proceed = true;
+
+            /**
+             * There are two different redirect scenarios here. Either the wayback
+             * machine redirects to a different time and/ or a different site. When 
+             * the wayback machine just redirects to a different URL, we return the
+             * redirect for the client to process in order to maintain the original 
+             * behaviour of the server. 
+             * 
+             * If the wayback machine just processes an internal redirect to send 
+             * the user to a different time, we follow that redirect.
+             * 
+             * The user will not realise travelling through the different timelines.
+             */
             if(response.statusCode == 302 || response.statusCode == 301){
-                httpRequest(response.headers.location)
+                /* check if the existing and redirect url match and
+                    if they do, follow this request */
+                if(getOriginalUrl(response.headers.location) == getOriginalUrl(url)
+                    || getOriginalUrl(response.headers.location) == (getOriginalUrl(url)+"/")
+                    || (getOriginalUrl(response.headers.location) + "/") == getOriginalUrl(url)){
+                    /* follow the redirect and return the result behind that */
+                    httpRequest(response.headers.location)
                     .then((redirectContent) => resolve(redirectContent))
                     .catch((redirectError) => reject(redirectError));
-            }else{
-                if (response.statusCode < 200 || response.statusCode > 299) {
+
+                    /* tell it to stop processing */
+                    proceed = false;
+                }
+            }
+            
+            if(proceed == true){
+                if ((response.statusCode < 200 || response.statusCode > 299)
+                    && (response.statusCode !== 302 && response.statusCode !== 301)) {
                     reject(new Error('Proxy request failed with status code ' + response.statusCode));
                 }
     
                 const body = [];
                 response.on('data', (chunk) => body.push(chunk));
                 response.on('end', () => resolve({
+                    statusCode: response.statusCode,
                     headers: response.headers,
                     body: Buffer.concat(body)
                 }));
@@ -201,4 +282,15 @@ function httpRequest(url) {
         
         request.on('error', (err) => reject(err));
     });
-  }
+}
+
+/**
+ * This function handles all logging
+ * 
+ * @param {string} text
+ * text to write to log 
+ */
+function syslog(text){
+    /* log the request to the console */
+    console.log((new Date()).toISOString() + " - " + text);    
+}
