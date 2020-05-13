@@ -100,9 +100,16 @@ async function getTargetUrl(sourceUrl){
     /* parse the result json and get the url */
     let json = JSON.parse(apiResult.body.toString());
     if(json.hasOwnProperty('archived_snapshots')){
-        /* return the closest url for this content */
-        let availableTimestamp = json.archived_snapshots.closest.timestamp;
-        result = WAYBACK_URL + availableTimestamp + "id_/" + sourceUrl;
+        if(json.archived_snapshots.hasOwnProperty('closest')){
+            /* return the closest url for this content */
+            let availableTimestamp = json.archived_snapshots.closest.timestamp;
+            result = WAYBACK_URL + availableTimestamp + "id_/" + sourceUrl;
+        }else{
+            /* the content is gone and not available in the archive,
+                therefore it would make no sense to request it. The
+                result will be reset to null */
+            result = null;
+        }
     }
 
     return result;
@@ -120,23 +127,31 @@ async function returnProxyResponse(socket,url){
         syslog(url);
 
         /* request the url from the wayback machine */
-        let response = await httpRequest(await getTargetUrl(url));
-
-        /* send redirect or final result */
-        if(response.statusCode == 301 || response.statusCode == 302){
-            /* pass on the 301 redirect */
-            returnHttpRedirect(socket,response.statusCode,
-                /* revert the wayback url to the original one */
-                getOriginalUrl(response.headers.location));
+        let targetUrl = await getTargetUrl(url);
+        if(targetUrl == null){
+            /* return an http 404 to indicate that
+                this content is not available */
+            returnHttpNotFound(socket,url);
         }else{
-            /* flush the result to the socket */
-            returnHttpResponse(socket,{
-                status: { code: 200, text: 'OK' },
-                content: {
-                    type: response.headers['content-type'],
-                    body: response.body
-                }
-            });
+            /* request the content from the archive */
+            let response = await httpRequest(targetUrl);
+
+            /* send redirect or final result */
+            if(response.statusCode == 301 || response.statusCode == 302){
+                /* pass on the 301 redirect */
+                returnHttpRedirect(socket,response.statusCode,
+                    /* revert the wayback url to the original one */
+                    getOriginalUrl(response.headers.location));
+            }else{
+                /* flush the result to the socket */
+                returnHttpResponse(socket,{
+                    status: { code: 200, text: 'OK' },
+                    content: {
+                        type: response.headers['content-type'],
+                        body: response.body
+                    }
+                });
+            }
         }
     }catch(ex){
         /* log the exception to the system output */
