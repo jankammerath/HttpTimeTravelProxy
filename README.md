@@ -23,6 +23,18 @@ const PROXY_SERVER_PORT = 8099;
 const PROXY_SERVER_NAME = "HttpTimeTravelProxy/0.1";
 ```
 
+### Running the proxy as a daemon on Linux
+
+You can find the service file for the application in [httptimetravelproxy.service](/httptimetravelproxy.service) which allows you to operate the proxy as a daemon with systemd. In order to install the Http Time Travel Proxy as a daemon on your Linux-system (tested with Ubuntu Server 20.04), you need to do the following.
+
+1. Copy [HttpTimeTravelProxy.js](/HttpTimeTravelProxy.js) to */opt/httptimetravelproxy/HttpTimeTravelProxy.js*
+2. Copy [httptimetravelproxy.service](/httptimetravelproxy.service) to */etc/systemd/system/httptimetravelproxy.service*
+3. Run **sudo systemctl daemon-reload** to have systemd reload the service files
+4. Start the service with **sudo service httptimetravelproxy start**
+5. Check the status with **sudo service httptimetravelproxy status**
+
+Now you have a running time machine daemon on your Linux server and whatever device from your network is connecting to that proxy can travel back in time. If you change the time period in the JavaScript file unter */opt/httptimetravelproxy/HttpTimeTravelProxy.js*, remember that you also need to restart the daemon with **sudo service httptimetravelproxy restart** in order for the changes to take effect.
+
 ## Client support and configuration
 
 You can use any HTTP-browser with the proxy. However the proxy currently only supports the HTTP GET method. POST, PUT, DELETE etc. are not supported as also archive.org's WaybackMachine has no support for these methods and obviously did not archive any dynamic content. The proxy was tested with Internet Explorer 5 and Netscape Navigation 4.8 on both MacOS 9.2.2 as well as Windows 98. It was also tested with the latest Firefox on the latest OSX.
