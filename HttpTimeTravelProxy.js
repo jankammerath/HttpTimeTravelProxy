@@ -75,6 +75,40 @@ let server = net.createServer(function (socket) {
 server.listen({port: PROXY_SERVER_PORT});
 
 /**
+ * Checks the wayback machine's api for
+ * any matching target url and returns
+ * the closest match
+ * 
+ * @param {string} sourceUrl
+ * the original url to travel to
+ *  
+ */
+async function getTargetUrl(sourceUrl){
+    /* create the default result which would cause
+        redirects to the closest result. This would 
+        however in many cases also mean endless 
+        redirects through this proxy, therefore
+        it is better to find the closest match */
+    let result = WAYBACK_URL + TIME_TRAVEL_DATETIME 
+                + "id_/" + sourceUrl;
+
+    /* query the WaybackMachine API for the archived content */
+    let apiUrl = "https://archive.org/wayback/available?url=" 
+        + sourceUrl + "&timestamp=" + TIME_TRAVEL_DATETIME;
+    let apiResult = await httpRequest(apiUrl);
+
+    /* parse the result json and get the url */
+    let json = JSON.parse(apiResult.body.toString());
+    if(json.hasOwnProperty('archived_snapshots')){
+        /* return the closest url for this content */
+        let availableTimestamp = json.archived_snapshots.closest.timestamp;
+        result = WAYBACK_URL + availableTimestamp + "id_/" + sourceUrl;
+    }
+
+    return result;
+}
+
+/**
  * Rewrite the request and return the response
  * 
  * @param {object} socket 
@@ -85,14 +119,8 @@ async function returnProxyResponse(socket,url){
         /* log the request to the console */
         syslog(url);
 
-        /* rewrite the target url. the 'id_' attachment to
-            the destination date ensures that the original
-            content is returned without any additions from
-            the wayback machine itself. */
-        let targetUrl = WAYBACK_URL + TIME_TRAVEL_DATETIME + "id_/" + url;
-
         /* request the url from the wayback machine */
-        let response = await httpRequest(targetUrl);
+        let response = await httpRequest(await getTargetUrl(url));
 
         /* send redirect or final result */
         if(response.statusCode == 301 || response.statusCode == 302){
@@ -111,6 +139,9 @@ async function returnProxyResponse(socket,url){
             });
         }
     }catch(ex){
+        /* log the exception to the system output */
+        syslog('Exception in proxy request: ' + ex);
+
         if(ex.statusCode == 404){
             /* return an http not found */
             returnHttpNotFound(socket,url);
