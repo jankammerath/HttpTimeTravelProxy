@@ -155,7 +155,13 @@ async function returnProxyResponse(socket,url){
         }
     }catch(ex){
         /* log the exception to the system output */
-        syslog('Exception in proxy request: ' + ex);
+        if(ex !== null){
+            if(ex.hasOwnProperty('statusCode')){
+                /* log the http error for the request */
+                syslog('Exception in proxy request: HTTP ' 
+                        + ex.statusCode + ' - ' + url);
+            }
+        }
 
         if(ex.statusCode == 404){
             /* return an http not found */
