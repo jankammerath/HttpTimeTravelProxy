@@ -20,7 +20,6 @@ const WAYBACK_URL = "https://web.archive.org/web/";
 
 /* import the networking libs */
 const net = require('net');
-const https = require('https');
 
 /* create the server to serve the proxy port */
 let server = net.createServer(function (socket) {
@@ -34,7 +33,7 @@ let server = net.createServer(function (socket) {
             let proxyRequest = clientRequest[0].split(' ');
             if(proxyRequest.length == 3){
                 /* check if this is a get request */
-                if(proxyRequest[0].toLowerCase() == "get"){
+                if(proxyRequest[0].trim().toLowerCase() == "get"){
                     /* return the rewritten response */
                     returnProxyResponse(socket,proxyRequest[1]);
                 }else{
@@ -63,12 +62,26 @@ server.listen({port: PROXY_SERVER_PORT});
  */
 async function returnProxyResponse(socket,url){
     try{
+        /* log the request to the console */
+        console.log((new Date()).toISOString() + " - " + url);
+
         /* rewrite the target url. the 'id_' attachment to
             the destination date ensures that the original
             content is returned without any additions from
             the wayback machine itself. */
         let targetUrl = WAYBACK_URL + TIME_TRAVEL_DATETIME + "id_/" + url;
-        socket.write("URL: "+ url);
+
+        /* request the url from the wayback machine */
+        let response = await httpRequest(targetUrl);
+
+        /* flush the result to the socket */
+        returnHttpResponse(socket,{
+            status: { code: 200, text: 'OK' },
+            content: {
+                type: response.headers['content-type'],
+                body: response.body
+            }
+        });
     }catch(ex){
         /* something crashed, return a bad gateway */
         returnHttpBadGateway(socket,ex);
@@ -85,14 +98,18 @@ async function returnProxyResponse(socket,url){
  * the response object with the content
  */
 function returnHttpResponse(socket,response){
+    /* define the http output to return */
+    let httpOutput = [
+        Buffer.from("HTTP/1.1 " + response.status.code + " " + response.status.text + "\r\n"),
+        Buffer.from("Server: " + PROXY_SERVER_NAME + "\r\n"),
+        Buffer.from("Content-Type: " + response.content.type + "\r\n"),
+        Buffer.from("Content-Length: " + Buffer.byteLength(response.content.body) + "\r\n"),
+        Buffer.from("\r\n"),
+        response.content.body
+    ]
+
     /* write the response to the supplied socket */
-    socket.write(
-        "HTTP/1.1 " + response.status.code + " " + response.status.text + "\r\n"
-        + "Server: " + PROXY_SERVER_NAME + "\r\n"
-        + "Content-Type: " + response.content.type + "\r\n"
-        + "Content-Length: " + Buffer.byteLength(response.content.body, "utf8") + "\r\n"
-        + "\r\n" + response.content.body
-    );
+    socket.write(Buffer.concat(httpOutput));
 }
 
 /**
@@ -120,7 +137,7 @@ function returnHttpBadGateway(socket,text){
         },
         content: {
             type: 'text/html',
-            body: html
+            body: Buffer.from(html)
         }
     });
 }
@@ -149,7 +166,7 @@ function returnHttpBadRequest(socket){
         },
         content: {
             type: 'text/html',
-            body: html
+            body: Buffer.from(html)
         }
     });
 }
@@ -157,12 +174,31 @@ function returnHttpBadRequest(socket){
 /**
  * Performs an http request
  * 
- * @param {object} options 
+ * @param {string} url
+ * the url to fetch as a proxy 
  */
-function httpRequest(options) {
-    return new Promise ((resolve, reject) => {
-      let request = https.request(options);
-      request.on('response', response => { resolve(response); });
-      request.on('error', error => { reject(error); });
-    }); 
+function httpRequest(url) {
+    return new Promise((resolve, reject) => {
+        const lib = url.startsWith('https') ? require('https') : require('http');
+        const request = lib.get(url, (response) => {
+            if(response.statusCode == 302 || response.statusCode == 301){
+                httpRequest(response.headers.location)
+                    .then((redirectContent) => resolve(redirectContent))
+                    .catch((redirectError) => reject(redirectError));
+            }else{
+                if (response.statusCode < 200 || response.statusCode > 299) {
+                    reject(new Error('Proxy request failed with status code ' + response.statusCode));
+                }
+    
+                const body = [];
+                response.on('data', (chunk) => body.push(chunk));
+                response.on('end', () => resolve({
+                    headers: response.headers,
+                    body: Buffer.concat(body)
+                }));
+            }
+        });
+        
+        request.on('error', (err) => reject(err));
+    });
   }
